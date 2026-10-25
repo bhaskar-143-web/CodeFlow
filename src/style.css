@@ -421,3 +421,56 @@ body{background:#edf1f9}
 .visual-stage{background:linear-gradient(145deg,#fff 0%,#f1efff 100%)}
 .transition-row,.no-transition{background:linear-gradient(100deg,#dedcff,#d9eee8);border-color:#c2c8e5}
 
+/* Keep lesson selection clear and compact within the existing lavender palette. */
+.lesson-picker{display:grid;grid-template-columns:minmax(145px,.8fr) minmax(165px,.9fr) minmax(185px,1.05fr) minmax(165px,.85fr);align-items:end;gap:10px;margin:12px 0 0;padding:12px 14px;border:1px solid #d0d3ea;border-radius:12px;background:linear-gradient(100deg,#e9e8fb,#edf2fb 58%,#e8f3ef)}
+.lesson-picker label{display:grid;gap:6px;min-width:0}
+.lesson-picker label>span{font:700 10px/1.2 "Segoe UI",sans-serif;letter-spacing:.06em;color:#5550a7}
+.lesson-picker select{width:100%;height:37px;padding:0 10px;border:1px solid #c9cde3;border-radius:8px;background:#f8f9fd;color:#35415a;font:600 13px "Segoe UI",sans-serif;outline:none}
+.lesson-picker select:focus{border-color:#7168c9;box-shadow:0 0 0 3px #7168c926}
+.lesson-picker select:disabled{opacity:.65}
+.lesson-picker-hint{display:grid;gap:4px;min-width:0;padding:0 7px 2px}
+.lesson-picker-hint strong{overflow:hidden;color:#36364e;text-overflow:ellipsis;white-space:nowrap;font:700 14px "Segoe UI",sans-serif}
+.lesson-picker-hint span{color:#656b82;font:12px "Segoe UI",sans-serif}
+@media(max-width:760px){.lesson-picker{grid-template-columns:1fr 1fr;gap:8px}.lesson-picker-hint{grid-column:1/-1;padding:3px 2px 0}}
+@media(max-width:480px){.lesson-picker{grid-template-columns:1fr}.lesson-picker-hint{grid-column:auto}}
+
+/* Keep the active source line visible beside its visual step. */
+.scene-source-line{display:flex;align-items:flex-start;gap:10px;max-width:680px;min-height:40px;margin:10px auto 14px;padding:9px 12px;border:1px solid #c6c7e8;border-radius:9px;background:linear-gradient(100deg,#e7e6f8,#edf0fa);text-align:left}
+.scene-source-line>span:first-child{flex:none;padding:2px 6px;border-radius:5px;background:#d7d5f1;color:#5148a8;font:700 10px/1.5 "Segoe UI",sans-serif;letter-spacing:.04em}
+.scene-source-line code{min-width:0;color:#302b43;font:500 12px/1.55 "DM Mono",monospace;white-space:pre-wrap;overflow-wrap:anywhere}
+.scene-source-line .scene-source-placeholder{padding:2px 0;background:transparent;color:#686c82;font:500 12px/1.5 "Segoe UI",sans-serif;letter-spacing:0}
+@media(max-width:700px){.scene-source-line{margin:8px auto 10px;padding:8px 10px}.scene-source-line code{font-size:11px}}
+
+/* Deep navy backdrop for the visual walkthrough. */
+.scene-panel{background:#10203d;border-color:#29456e;box-shadow:0 14px 32px #172b4d30}
+.scene-panel .panel-head{background:#172b4c;border-bottom-color:#29456e}
+.scene-panel .panel-title{color:#eaf0ff}
+.scene-panel .panel-title svg{color:#8db8ff}
+.scene-count{color:#bdcdee}
+.scene-canvas{background:radial-gradient(ellipse at 52% 68%,#1c3a65 0%,transparent 68%),linear-gradient(145deg,#0b1730 0%,#122747 56%,#193458 100%)}
+.ambient-one{background:#4579db}
+.ambient-two{background:#3e9cb4}
+.scene-content h1{color:#f3f6ff}
+.scene-content p{color:#c5d2e8}
+.eyebrow{color:#91baff}
+.scene-icon{background:#1b3558;border-color:#416493;color:#9fc7ff}
+.scene-caption{background:#172b4c;border-top-color:#29456e;color:#cedbf0}
+
+/* Keep the scene steady on load and give the page a muted lavender backdrop. */
+body{background:radial-gradient(ellipse at 78% 10%,#e3d8ee 0%,transparent 38%),linear-gradient(145deg,#d7c9e5 0%,#e0d7e9 52%,#d0c1df 100%)}
+.scene-copy{animation:none;opacity:1;transform:none}
+.scene-content h1,.scene-content p,.visual-stage,.scene-panel,.scene-panel .panel-head,.scene-canvas,.scene-caption{transition:none}
+
+
+
+.program-input{display:grid;gap:5px;padding:10px 14px;background:#edf1ff;border-top:1px solid #dce2f2}.program-input>span{font-size:10px;font-weight:750;letter-spacing:.09em;color:#596582}.program-input textarea{min-height:42px;max-height:90px;resize:vertical;border:1px solid #d4d9ea;border-radius:8px;padding:8px 10px;background:#fafbff;color:#27334c;font:13px/1.5 Consolas,"Cascadia Code",monospace;outline:none}.program-input textarea:focus{border-color:#7a77dc;box-shadow:0 0 0 2px #7a77dc22}.program-input small{font-size:10px;color:#7e899e}@media(max-width:700px){.program-input textarea{font-size:12px}}
+
+.call-stack{position:relative;z-index:1;margin:12px 0;padding:10px 12px;border:1px solid #d9d5f2;border-radius:10px;background:#f7f5ff}.call-stack-title{display:flex;justify-content:space-between;gap:8px;font:700 10px/1.3 "Segoe UI",Arial,sans-serif;letter-spacing:.08em;color:#77729e}.call-stack-title span{font-weight:500;letter-spacing:0;color:#8e8aa9}.call-stack-frames{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.call-frame{display:flex;align-items:center;gap:7px;padding:6px 9px;border:1px solid #e2dff4;border-radius:7px;background:#fff;color:#63617c;font:12px/1.2 Consolas,monospace}.call-frame>span{font-size:10px;color:#aaa5c5}.call-frame.is-active{border-color:#9690e0;background:#eeedff;color:#433e88;box-shadow:0 2px 8px #756ed21c}
+
+/* Let the walkthrough grow with its contents so longer lessons never get clipped. */
+.workspace{height:auto;min-height:470px;align-items:stretch}
+.scene-panel{min-height:470px;overflow:visible}
+.scene-canvas{flex:none;min-height:420px;overflow:visible;display:block}
+.scene-content{height:auto;min-height:420px;padding:24px 20px;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.visual-stage{width:100%;max-width:760px;overflow:visible}
+@media(max-width:1120px){.scene-panel{min-height:0}.scene-canvas{min-height:0}.scene-content{min-height:0}}

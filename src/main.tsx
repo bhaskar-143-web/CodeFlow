@@ -2,50 +2,44 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Activity, ChevronLeft, ChevronRight, CircleHelp, Code2, FastForward, Pause, Play, RotateCcw, Terminal, Waves } from 'lucide-react';
 import './style.css';
+import { concepts, lessons, type Lesson } from './lessons';
 
-type Change = { name: string; before: unknown; after: unknown };
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '');
+
+type Change = { name: string; before?: unknown; after: unknown };
 // Each language adapter should normalize its runtime events into this shared scene contract.
 type TraceEvent = {
   type: string;
   line: number | null;
   function: string;
+  callStack?: string[];
   changes: Change[];
   focus?: { collection: string; index: number };
   state: Record<string, unknown>;
+  valueTypes?: Record<string, string>;
   output: string;
   narration: string;
 };
 type TraceResult = { events: TraceEvent[]; output: string; error: string | null };
+type SavedWorkspace = { selectedLessonId: string; code: string; programInput: string };
+const WORKSPACE_STORAGE_KEY = 'codeflow.workspace.v1';
 
-const sample = `numbers = [10, 20, 30]
-total = 0
-
-for num in numbers:
-    total = total + num
-    print(total)
-
-print("Done")`;
-
-// This is a hand-authored preview timeline, not the result of executing the editor contents.
-const demo: TraceResult = {
-  error: null,
-  output: '10\n30\n60\nDone\n',
-  events: [
-    { type: 'setup', line: 1, function: '<module>', changes: [{ name: 'numbers', before: undefined, after: [10, 20, 30] }], state: { numbers: [10, 20, 30] }, output: '', narration: 'The list [10, 20, 30] appears.' },
-    { type: 'setup', line: 2, function: '<module>', changes: [{ name: 'total', before: undefined, after: 0 }], state: { numbers: [10, 20, 30], total: 0 }, output: '', narration: 'A running total starts at zero.' },
-    { type: 'iteration', line: 4, function: '<module>', changes: [{ name: 'num', before: undefined, after: 10 }], state: { numbers: [10, 20, 30], total: 0, num: 10 }, output: '', narration: 'Iteration 1 selects 10.', focus: { collection: 'numbers', index: 0 } },
-    { type: 'assignment', line: 5, function: '<module>', changes: [{ name: 'total', before: 0, after: 10 }], state: { numbers: [10, 20, 30], total: 10, num: 10 }, output: '', narration: 'The active value is added to total.' },
-    { type: 'output', line: 6, function: '<module>', changes: [], state: { numbers: [10, 20, 30], total: 10, num: 10 }, output: '10\n', narration: '10 is printed to the console.' },
-    { type: 'iteration', line: 4, function: '<module>', changes: [{ name: 'num', before: 10, after: 20 }], state: { numbers: [10, 20, 30], total: 10, num: 20 }, output: '10\n', narration: 'Iteration 2 selects 20.', focus: { collection: 'numbers', index: 1 } },
-    { type: 'assignment', line: 5, function: '<module>', changes: [{ name: 'total', before: 10, after: 30 }], state: { numbers: [10, 20, 30], total: 30, num: 20 }, output: '10\n', narration: '10 + 20 changes total to 30.' },
-    { type: 'output', line: 6, function: '<module>', changes: [], state: { numbers: [10, 20, 30], total: 30, num: 20 }, output: '10\n30\n', narration: '30 is printed to the console.' },
-    { type: 'iteration', line: 4, function: '<module>', changes: [{ name: 'num', before: 20, after: 30 }], state: { numbers: [10, 20, 30], total: 30, num: 30 }, output: '10\n30\n', narration: 'Iteration 3 selects 30.', focus: { collection: 'numbers', index: 2 } },
-    { type: 'assignment', line: 5, function: '<module>', changes: [{ name: 'total', before: 30, after: 60 }], state: { numbers: [10, 20, 30], total: 60, num: 30 }, output: '10\n30\n', narration: '30 + 30 changes total to 60.' },
-    { type: 'output', line: 6, function: '<module>', changes: [], state: { numbers: [10, 20, 30], total: 60, num: 30 }, output: '10\n30\n60\n', narration: '60 is printed to the console.' },
-    { type: 'loop_end', line: 4, function: '<module>', changes: [], state: { numbers: [10, 20, 30], total: 60, num: 30 }, output: '10\n30\n60\n', narration: 'The list is finished. The loop ends.' },
-    { type: 'output', line: 8, function: '<module>', changes: [], state: { numbers: [10, 20, 30], total: 60, num: 30 }, output: '10\n30\n60\nDone\n', narration: 'Done is printed. The program is complete.' },
-  ],
-};
+function readSavedWorkspace(): SavedWorkspace {
+  const firstLesson = lessons[0];
+  const fallback = { selectedLessonId: firstLesson.id, code: firstLesson.code, programInput: firstLesson.input ?? '' };
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(WORKSPACE_STORAGE_KEY) ?? 'null') as Partial<SavedWorkspace> | null;
+    if (!saved) return fallback;
+    const lesson = lessons.find(item => item.id === saved.selectedLessonId) ?? firstLesson;
+    return {
+      selectedLessonId: lesson.id,
+      code: typeof saved.code === 'string' && saved.code.length <= 20_000 ? saved.code : lesson.code,
+      programInput: typeof saved.programInput === 'string' && saved.programInput.length <= 5_000 ? saved.programInput : lesson.input ?? '',
+    };
+  } catch {
+    return fallback;
+  }
+}
 
 function formatTraceValue(value: unknown): string {
   if (value === undefined) return 'not set';
@@ -53,22 +47,35 @@ function formatTraceValue(value: unknown): string {
   if (typeof value === 'object' && value !== null) return JSON.stringify(value);
   return String(value);
 }
+function isDictionary(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 function App() {
-  const [code, setCode] = useState(sample);
+  const [savedWorkspace] = useState(readSavedWorkspace);
+  const [selectedLessonId, setSelectedLessonId] = useState(savedWorkspace.selectedLessonId);
+  const [code, setCode] = useState(savedWorkspace.code);
+  const [programInput, setProgramInput] = useState(savedWorkspace.programInput);
   const [result, setResult] = useState<TraceResult | null>(null);
   const [step, setStep] = useState(0);
   const [error, setError] = useState('');
   const [playing, setPlaying] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [speed, setSpeed] = useState(1);
   const current = result?.events[Math.min(step, Math.max(0, (result?.events.length ?? 1) - 1))];
+  const activeSourceLine = current?.line ? code.split('\n')[current.line - 1] : undefined;
+  const currentLesson = lessons.find(lesson => lesson.id === selectedLessonId) ?? lessons[0];
+  const conceptLessons = lessons.filter(lesson => lesson.concept === currentLesson.concept);
+  const conceptSubtopics = [...new Set(conceptLessons.map(lesson => lesson.subtopic))];
+  const subtopicLessons = conceptLessons.filter(lesson => lesson.subtopic === currentLesson.subtopic);
+  const exampleNumber = subtopicLessons.findIndex(lesson => lesson.id === currentLesson.id) + 1;
   const visibleState = current?.state ?? {};
   const variables = Object.entries(visibleState).filter(([key]) => !key.startsWith('__'));
-  const collectionVariables = variables.filter(([, value]) => Array.isArray(value));
-  const scalarVariables = variables.filter(([, value]) => !Array.isArray(value));
+  const collectionVariables = variables.filter(([, value]) => Array.isArray(value) || isDictionary(value));
+  const scalarVariables = variables.filter(([, value]) => !Array.isArray(value) && !isDictionary(value));
   const changedVariableNames = new Set(current?.changes.map(change => change.name) ?? []);
   const progress = result?.events.length ? ((step + 1) / result.events.length) * 100 : 0;
-  const changed = code !== sample;
-  const eventLabel = !current ? 'READY TO PLAY' : current.type === 'iteration' ? 'ITEM SELECTED' : current.type === 'assignment' ? 'VARIABLE UPDATED' : current.type === 'output' ? 'OUTPUT SHOWN' : current.type === 'loop_end' ? 'LOOP FINISHED' : 'STARTING STATE';
+  const changed = code !== currentLesson.code;
+  const eventLabel = !current ? 'READY TO PLAY' : current.type === 'branch' ? 'CONDITION CHECKED' : current.type === 'iteration' ? 'ITEM SELECTED' : current.type === 'loop_control' ? 'LOOP CONTROL' : current.type === 'input' ? 'INPUT RECEIVED' : current.type === 'exception' ? 'ERROR CAUGHT' : current.type === 'class_def' ? 'CLASS DEFINED' : current.type === 'assignment' ? 'VARIABLE UPDATED' : current.type === 'output' ? 'OUTPUT SHOWN' : current.type === 'loop_end' ? 'LOOP FINISHED' : current.type === 'function_def' ? 'FUNCTION DEFINED' : current.type === 'call' ? 'FUNCTION CALLED' : current.type === 'return' ? 'VALUE RETURNED' : 'STARTING STATE';
 
   useEffect(() => {
     if (!playing || !result) return;
@@ -80,10 +87,26 @@ function App() {
     return () => window.clearTimeout(timer);
   }, [playing, result, step, speed]);
 
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify({ selectedLessonId, code, programInput }));
+    } catch {
+      // Keep the editor usable if browser storage is unavailable or full.
+    }
+  }, [selectedLessonId, code, programInput]);
+
   const scene = useMemo(() => {
-    if (!current) return { eyebrow: 'TRACE PREVIEW', title: 'Your program, in motion.', detail: 'Play the sample to watch values and variables change.' };
+    if (!current) return { eyebrow: 'TRACE PREVIEW', title: 'Your program, in motion.', detail: 'Run code to watch values and variables change.' };
     if (current.type === 'setup') return { eyebrow: 'INITIAL VALUES', title: current.narration, detail: 'The program state is being prepared.' };
+    if (current.type === 'branch') return { eyebrow: 'CONDITION CHECKED', title: current.narration, detail: 'The highlighted source line chooses which block runs next.' }
     if (current.type === 'iteration') return { eyebrow: 'VALUE SELECTED', title: current.narration, detail: 'Follow the selected value through the program state.' };
+    if (current.type === 'class_def') return { eyebrow: 'CLASS DEFINED', title: current.narration, detail: 'The class is a blueprint. Creating an instance runs its initializer.' };
+    if (current.type === 'exception') return { eyebrow: 'ERROR CAUGHT', title: current.narration, detail: 'The matching except block takes control, so the program can continue.' };
+    if (current.type === 'input') return { eyebrow: 'INPUT RECEIVED', title: current.narration, detail: 'The value from Program input is passed into input() as text.' };
+    if (current.type === 'loop_control') return { eyebrow: 'LOOP CONTROL', title: current.narration, detail: 'The loop changes direction at this line.' };
+    if (current.type === 'function_def') return { eyebrow: 'FUNCTION READY', title: current.narration, detail: 'The function is defined. Its body runs when the program calls it.' };
+    if (current.type === 'call') return { eyebrow: 'FUNCTION CALLED', title: current.narration, detail: 'Step into the function and follow its inputs and work.' };
+    if (current.type === 'return') return { eyebrow: 'FUNCTION RESULT', title: current.narration, detail: 'This result goes back to the line that called the function.' };
     if (current.type === 'assignment') {
       const change = current.changes[0];
       return { eyebrow: 'STATE CHANGED', title: current.narration, detail: change ? change.name + ' changed from ' + formatTraceValue(change.before) + ' to ' + formatTraceValue(change.after) + '.' : 'The program state was updated.' };
@@ -93,29 +116,58 @@ function App() {
     return { eyebrow: 'TRACE STEP', title: current.narration, detail: current.line ? 'Program is at line ' + current.line + '.' : 'Program state at this step.' };
   }, [current]);
 
-  function playSample() {
+  function chooseLesson(lesson: Lesson) {
+    setSelectedLessonId(lesson.id);
+    setCode(lesson.code);
+    setProgramInput(lesson.input ?? '');
+    setResult(null);
+    setStep(0);
     setError('');
-    if (changed) {
-      setPlaying(false);
+    setPlaying(false);
+  }
+  async function runTrace() {
+    if (!code.trim()) {
       setResult(null);
-      setError('This preview uses a fixed sample trace. Restore the sample code to play it; edited code is not executed.');
+      setError('Enter some Python code first.');
       return;
     }
-    setResult(demo);
-    setStep(0);
-    setPlaying(true);
+    setLoading(true);
+    setPlaying(false);
+    setError('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/trace`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, inputs: programInput ? programInput.split(/\r?\n/) : [] }),
+      });
+      const trace = await response.json() as TraceResult;
+      if (!response.ok) {
+        throw new Error((trace as unknown as { detail?: string }).detail ?? 'The trace service could not process this code.');
+      }
+      setResult(trace);
+      setStep(0);
+      if (trace.error) setError(trace.error);
+      setPlaying(trace.events.length > 0);
+    } catch (cause) {
+      setResult(null);
+      setError(cause instanceof Error && cause.message.includes('Failed to fetch')
+        ? 'Cannot reach the Python tracer. Start the backend in a second terminal, then try again.'
+        : cause instanceof Error ? cause.message : 'Could not create a trace.');
+    } finally {
+      setLoading(false);
+    }
   }
-
   function togglePlayback() {
-    if (!result || step >= result.events.length - 1) {
-      playSample();
+    if (loading) return;
+    if (!result || !result.events.length || step >= result.events.length - 1) {
+      void runTrace();
       return;
     }
     setPlaying(!playing);
   }
-
-  function restoreSample() {
-    setCode(sample);
+  function restoreLesson() {
+    setCode(currentLesson.code);
+    setProgramInput(currentLesson.input ?? '');
     setError('');
     setResult(null);
     setStep(0);
@@ -125,69 +177,93 @@ function App() {
   return <main className="app-shell">
     <header className="topbar">
       <div className="brand"><div className="brand-mark"><Waves size={19} /></div><span>codeflow</span><span className="tag">LEARN BY WATCHING</span></div>
-      <div className="top-center"><span className="demo-dot" /> SAMPLE LESSON <span className="divider">/</span> LOOP + TOTAL</div>
-      <button className="run-button" onClick={togglePlayback}>{playing ? <Pause size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" />} {playing ? 'Pause scene' : result && step < result.events.length - 1 ? 'Resume scene' : 'Play scene'}</button>
+      <div className="top-center"><span className="demo-dot" /> PYTHON LESSONS <span className="divider">/</span> SAFE MODE</div>
+      <button className="run-button" onClick={togglePlayback} disabled={loading}>{loading ? <Activity size={15} /> : playing ? <Pause size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" />} {loading ? 'Running…' : playing ? 'Pause' : result && step < result.events.length - 1 ? 'Continue' : 'Run code'}</button>
     </header>
 
+    <section className="lesson-picker" aria-label="Choose a concept, type, and example">
+      <label><span>CONCEPT</span><select value={currentLesson.concept} disabled={loading} onChange={event => {
+        const firstLesson = lessons.find(lesson => lesson.concept === event.target.value);
+        if (firstLesson) chooseLesson(firstLesson);
+      }}>{concepts.map(concept => <option key={concept} value={concept}>{concept}</option>)}</select></label>
+      <label><span>TYPE</span><select value={currentLesson.subtopic} disabled={loading} onChange={event => {
+        const firstLesson = conceptLessons.find(lesson => lesson.subtopic === event.target.value);
+        if (firstLesson) chooseLesson(firstLesson);
+      }}>{conceptSubtopics.map(subtopic => <option key={subtopic} value={subtopic}>{subtopic}</option>)}</select></label>
+      <label><span>EXAMPLE</span><select value={currentLesson.id} disabled={loading} onChange={event => chooseLesson(subtopicLessons.find(lesson => lesson.id === event.target.value) ?? subtopicLessons[0])}>{subtopicLessons.map(lesson => <option key={lesson.id} value={lesson.id}>{lesson.title}</option>)}</select></label>
+      <div className="lesson-picker-hint"><strong>{currentLesson.title}</strong><span>Example {exampleNumber} of {subtopicLessons.length}</span></div>
+    </section>
     <section className="lesson-intro" aria-label="Lesson overview">
-      <div className="lesson-point lesson-goal"><span>GOAL</span><p>Add 10, 20 and 30 together.</p></div>
-      <div className="lesson-point lesson-logic"><span>HOW THE LOGIC WORKS</span><p>Start total at 0. Each loop adds the current number, then prints the total.</p></div>
-      <div className="lesson-point lesson-question"><span>QUICK QUESTION</span><p>What will be printed after the second number?</p></div>
+      <div className="lesson-point lesson-goal"><span>GOAL</span><p>{currentLesson.goal}</p></div>
+      <div className="lesson-point lesson-logic"><span>THE IDEA</span><p>{currentLesson.logic}</p></div>
+      <div className="lesson-point lesson-question"><span>THINK ABOUT IT</span><p>{currentLesson.question}</p></div>
     </section>
 
     <section className="workspace">
       <div className="panel editor-panel">
-        <div className="panel-head"><div className="panel-title"><Code2 size={15} /> <span>Code editor</span></div><div className="editor-actions">{changed && <button className="reset-sample" onClick={restoreSample}>Restore sample</button>}<span className="file-pill">main.py</span></div></div>
+        <div className="panel-head"><div className="panel-title"><Code2 size={15} /> <span>Your code</span></div><div className="editor-actions">{changed && <button className="reset-sample" onClick={restoreLesson}>Reset example</button>}<span className="file-pill">main.py</span></div></div>
         <div className="editor-wrap"><div className="line-numbers">{code.split('\n').map((_, i) => <div key={i} className={current?.line === i + 1 ? 'active' : ''}>{String(i + 1).padStart(2, '0')}</div>)}</div><textarea spellCheck={false} value={code} onChange={e => { setCode(e.target.value); setResult(null); setPlaying(false); setError(''); }} aria-label="Python source code" /></div>
-        <div className="editor-foot"><span><i className="demo-dot" /> Sample preview Â· code is not executed</span><span>Python</span></div>
+        <label className="program-input"><span>PROGRAM INPUT</span><textarea value={programInput} onChange={e => { setProgramInput(e.target.value); setResult(null); setPlaying(false); }} aria-label="Program input values, one per line" placeholder="Enter one value for each input() call" /><small>One value per line. input() reads them in order.</small></label>
+        <div className="editor-foot"><span><i className="demo-dot" /> Python · safe mode</span><span>Python</span></div>
       </div>
 
       <div className="panel scene-panel">
-        <div className="panel-head"><div className="panel-title"><Activity size={15} /> <span>Execution scene</span></div><span className="scene-count">{result ? `${step + 1} / ${result.events.length}` : 'SAMPLE'}</span></div>
+        <div className="panel-head"><div className="panel-title"><Activity size={15} /> <span>Visual walkthrough</span></div><span className="scene-count">{result ? `${step + 1} / ${result.events.length}` : 'READY'}</span></div>
         <div className="scene-canvas">
           <div className="ambient ambient-one" /><div className="ambient ambient-two" />
           <div className="scene-content">
             <div className="scene-copy" key={step}><div className="eyebrow">{scene.eyebrow}</div>
             <h1>{scene.title}</h1><p>{scene.detail}</p></div>
+            <div className="scene-source-line" aria-live="polite" aria-label={current?.line ? `Current code line ${current.line}${current.function !== '<module>' ? ` in ${current.function}` : ''}` : 'Current code line'}>
+              {current?.line && activeSourceLine !== undefined
+                ? <><span>{current.function !== '<module>' ? `${current.function} · ` : ''}LINE {String(current.line).padStart(2, '0')}</span><code>{activeSourceLine || '(blank line)'}</code></>
+                : <span className="scene-source-placeholder">Run code to see the current line here</span>}
+            </div>
             <div className="visual-stage">
               <div className="stage-kicker"><span>PROGRAM DATA</span><span>{result ? 'STEP ' + (step + 1) + ' OF ' + result.events.length : 'READY'}</span></div>
-              {collectionVariables.length ? <div className="collection-list">{collectionVariables.map(([name, value]) => Array.isArray(value) && <div className="collection-block" key={name}>
-                <div className="collection-title"><strong>{name}</strong><span>{value.length} {value.length === 1 ? 'item' : 'items'}</span></div>
-                <div className="list-track">{value.map((item, index) => {
-                  const focusedIndex = current?.focus?.collection === name
-                    ? current.focus.index
-                    : current?.type === 'iteration'
-                      ? value.findIndex(entry => Object.is(entry, current.changes[0]?.after))
-                      : -1;
-                  const isCurrent = index === focusedIndex;
-                  const isPast = focusedIndex >= 0 && index < focusedIndex;
-                  return <div key={index} className={'list-cell' + (isCurrent ? ' is-current' : '') + (isPast ? ' is-done' : '')}><span>{index + 1}</span><b>{formatTraceValue(item)}</b></div>;
-                })}</div>
-              </div>)}</div> : <div className="empty-collection">No collection values in this step</div>}
+              {current?.callStack?.length ? <div className="call-stack" aria-label="Function call stack"><div className="call-stack-title">CALL STACK <span>{current.callStack.length} active {current.callStack.length === 1 ? 'call' : 'calls'}</span></div><div className="call-stack-frames">{current.callStack.map((name, index) => <div key={index} className={index === current.callStack!.length - 1 ? 'call-frame is-active' : 'call-frame'}><span>{String(index + 1).padStart(2, '0')}</span><strong>{name}()</strong></div>)}</div></div> : null}
+              {collectionVariables.length ? <div className="collection-list">{collectionVariables.map(([name, value]) => {
+                const entries: [string, unknown][] = Array.isArray(value)
+                  ? value.map((item, index) => [String(index + 1), item])
+                  : Object.entries(value as Record<string, unknown>);
+                return <div className="collection-block" key={name}>
+                  <div className="collection-title"><strong>{name}</strong><span>{entries.length} {current?.valueTypes?.[name] === 'set' ? 'members' : current?.valueTypes?.[name] === 'object' ? 'attributes' : isDictionary(value) ? 'keys' : entries.length === 1 ? 'item' : 'items'}</span></div>
+                  <div className="list-track">{entries.map(([key, item], index) => {
+                    const focusedIndex = current?.focus?.collection === name
+                      ? current.focus.index
+                      : current?.type === 'iteration'
+                        ? entries.findIndex(([, entry]) => Object.is(entry, current.changes[0]?.after))
+                        : -1;
+                    const isCurrent = index === focusedIndex;
+                    const isPast = focusedIndex >= 0 && index < focusedIndex;
+                    return <div key={key} className={'list-cell' + (isCurrent ? ' is-current' : '') + (isPast ? ' is-done' : '')}><span>{key}</span><b>{formatTraceValue(item)}</b></div>;
+                  })}</div>
+                </div>;
+              })}</div> : <div className="empty-collection">No collection values in this step</div>}
               <div className="state-machine">{scalarVariables.length ? scalarVariables.map(([name, value]) => <div key={name} className={changedVariableNames.has(name) ? 'state-card is-changed' : 'state-card'}><span>{name}</span><strong>{formatTraceValue(value)}</strong></div>) : <div className="empty-collection">No scalar values in this step</div>}</div>
               <div className="transition-list">{current?.changes.length ? current.changes.slice(0, 2).map((change, index) => <div className="transition-row" key={change.name + index}><span>{change.name}</span><strong>{change.before === undefined ? 'created' : formatTraceValue(change.before)} <i>&rarr;</i> {formatTraceValue(change.after)}</strong></div>) : <div className="no-transition">No stored value changed in this step.</div>}</div>
             </div>
           </div>
         </div>
-        <div className="scene-caption"><span><i className="demo-dot" /> {current ? eventLabel : 'READY TO PLAY'}</span><span>{current?.function ?? 'Sample preview'}</span></div>
+        <div className="scene-caption"><span><i className="demo-dot" /> {current ? eventLabel : 'READY TO PLAY'}</span><span>{current ? 'CodeFlow trace' : 'Waiting for code'}</span></div>
       </div>
 
       <aside className="right-rail">
-        <div className="panel state-panel"><div className="panel-head"><div className="panel-title"><span className="braces">{ }</span><span>Program state</span></div><CircleHelp size={15} className="muted-icon" /></div>
-          <div className="state-body">{variables.length ? variables.map(([name, value]) => <div className="state-item" key={name}><div><span className="state-name">{name}</span><span className="state-type">{Array.isArray(value) ? 'list' : typeof value}</span></div><strong>{JSON.stringify(value)}</strong></div>) : <div className="empty-state">{result ? 'No tracked variables at this step.' : 'Sample variables appear here during replay.'}</div>}
-            {current?.changes?.slice(0, 3).map((change, i) => <div className="why-card" key={`${change.name}-${i}`}><span>WHY IT CHANGED</span><b>{change.name}: {String(change.before ?? 'â€”')} â†’ {String(change.after)}</b><small>Sample event at line {current.line}.</small></div>)}
+        <div className="panel state-panel"><div className="panel-head"><div className="panel-title"><span className="braces">{ }</span><span>Values right now</span></div><CircleHelp size={15} className="muted-icon" /></div>
+          <div className="state-body">{variables.length ? variables.map(([name, value]) => <div className="state-item" key={name}><div><span className="state-name">{name}</span><span className="state-type">{current?.valueTypes?.[name] ?? (Array.isArray(value) ? 'list' : isDictionary(value) ? 'dictionary' : typeof value)}</span></div><strong>{JSON.stringify(value)}</strong></div>) : <div className="empty-state">{result ? 'No tracked variables at this step.' : 'Variables appear here while code runs.'}</div>}
+            {current?.changes?.slice(0, 3).map((change, i) => <div className="why-card" key={`${change.name}-${i}`}><span>WHY IT CHANGED</span><b>{change.name}: {change.before === undefined ? 'created' : formatTraceValue(change.before)} &rarr; {formatTraceValue(change.after)}</b><small>Changed on line {current.line}.</small></div>)}
           </div>
         </div>
-        <div className="panel guide-panel"><div className="panel-head"><div className="panel-title"><Waves size={15} /><span>Scene guide</span></div></div><div className="guide-body"><div className="guide-row"><span className="guide-swatch selected-swatch" /><span>Highlighted tile = focused item</span></div><div className="guide-row"><span className="guide-swatch total-swatch" /><span>Accent card = value changed in this step</span></div></div></div>
+        <div className="panel guide-panel"><div className="panel-head"><div className="panel-title"><Waves size={15} /><span>How to read this</span></div></div><div className="guide-body"><div className="guide-row"><span className="guide-swatch selected-swatch" /><span>Bright tile = item being used</span></div><div className="guide-row"><span className="guide-swatch total-swatch" /><span>Highlighted value = changed now</span></div></div></div>
       </aside>
     </section>
 
     <section className="bottom-area">
-      <div className="timeline-bar"><div className="timeline-title"><span className="timeline-pulse" /> SAMPLE TIMELINE</div><div className="timeline-track"><div className="track-fill" style={{ width: `${progress}%` }} />{result?.events.map((event, i) => <button key={i} aria-label={`Go to sample event ${i + 1}`} title={`${event.type} Â· line ${event.line ?? 'â€”'}`} className={`event-dot ${i === step ? 'selected' : ''}`} style={{ left: `${result.events.length < 2 ? 0 : (i / (result.events.length - 1)) * 100}%` }} onClick={() => { setPlaying(false); setStep(i); }} />)}</div><div className="timeline-end">{result?.events.length ? `${result.events.length} EVENTS` : 'END'}</div></div>
-      <div className="transport"><div className="transport-controls"><button title="Restart" onClick={() => setStep(0)} disabled={!result}><RotateCcw size={15} /></button><button title="Previous event" onClick={() => setStep(Math.max(0, step - 1))} disabled={!result || step === 0}><ChevronLeft size={18} /></button><button className="play-control" title="Next event" onClick={() => setStep(Math.min((result?.events.length ?? 1) - 1, step + 1))} disabled={!result}><ChevronRight size={18} /></button><button title="Next event" onClick={() => setStep(Math.min((result?.events.length ?? 1) - 1, step + 1))} disabled={!result}><FastForward size={15} /></button></div><div className="step-label">{current ? `SAMPLE LINE ${String(current.line ?? 'â€”').padStart(2, '0')}  Â·  ${current.type.toUpperCase()}` : 'PLAY THE FIXED SAMPLE TRACE'}</div><label className="speed-control">SPEED <select value={speed} onChange={e => setSpeed(Number(e.target.value))}><option value={0.65}>0.65?</option><option value={1}>1?</option><option value={1.5}>1.5?</option></select></label></div>
-      <div className="console-panel"><div className="console-head"><div className="panel-title"><Terminal size={15} /><span>Sample console</span></div><span className="console-status">{error ? 'INFO' : result ? 'DEMO' : 'READY'}</span></div><div className="console-content">{error ? <span className="console-error">{error}</span> : current?.output ? current.output.split('\n').filter((line, i, all) => !(i === all.length - 1 && line === '')).map((line, i) => <div className="console-line" key={i}><span>â€º</span>{line}</div>) : <span className="console-placeholder">Sample output appears as the replay advances.</span>}</div></div>
+      <div className="timeline-bar"><div className="timeline-title"><span className="timeline-pulse" /> PROGRAM STEPS</div><div className="timeline-track"><div className="track-fill" style={{ width: `${progress}%` }} />{result?.events.map((event, i) => <button key={i} aria-label={`Go to step ${i + 1}`} title={`${event.type} · line ${event.line ?? '—'}`} className={`event-dot ${i === step ? 'selected' : ''}`} style={{ left: `${result.events.length < 2 ? 0 : (i / (result.events.length - 1)) * 100}%` }} onClick={() => { setPlaying(false); setStep(i); }} />)}</div><div className="timeline-end">{result?.events.length ? `${result.events.length} STEPS` : 'READY'}</div></div>
+      <div className="transport"><div className="transport-controls"><button title="Restart" onClick={() => setStep(0)} disabled={!result}><RotateCcw size={15} /></button><button title="Previous event" onClick={() => setStep(Math.max(0, step - 1))} disabled={!result || step === 0}><ChevronLeft size={18} /></button><button className="play-control" title="Next event" onClick={() => setStep(Math.min((result?.events.length ?? 1) - 1, step + 1))} disabled={!result}><ChevronRight size={18} /></button><button title="Next event" onClick={() => setStep(Math.min((result?.events.length ?? 1) - 1, step + 1))} disabled={!result}><FastForward size={15} /></button></div><div className="step-label">{current ? `LINE ${String(current.line ?? 'â€”').padStart(2, '0')}  Â·  ${current.type.toUpperCase()}` : 'RUN PYTHON CODE'}</div><label className="speed-control">SPEED <select value={speed} onChange={e => setSpeed(Number(e.target.value))}><option value={0.65}>0.65?</option><option value={1}>1?</option><option value={1.5}>1.5?</option></select></label></div>
+      <div className="console-panel"><div className="console-head"><div className="panel-title"><Terminal size={15} /><span>Output</span></div><span className="console-status">{error ? 'INFO' : result ? 'TRACE' : 'READY'}</span></div><div className="console-content">{error ? <span className="console-error">{error}</span> : current?.output ? current.output.split('\n').filter((line, i, all) => !(i === all.length - 1 && line === '')).map((line, i) => <div className="console-line" key={i}><span>â€º</span>{line}</div>) : <span className="console-placeholder">Program output appears here as the trace advances.</span>}</div></div>
     </section>
-    <footer><span>CODEFLOW <i>Â·</i> SAMPLE REPLAY</span><span>Fixed demo events Â· edited Python is not executed</span></footer>
+    <footer><span>CODEFLOW <i>Â·</i> SAFE PYTHON TRACE</span><span>Restricted Python subset Â· unsupported syntax is not run</span></footer>
   </main>;
 }
 
