@@ -474,3 +474,135 @@ body{background:radial-gradient(ellipse at 78% 10%,#e3d8ee 0%,transparent 38%),l
 .scene-content{height:auto;min-height:420px;padding:24px 20px;display:flex;flex-direction:column;align-items:center;justify-content:center}
 .visual-stage{width:100%;max-width:760px;overflow:visible}
 @media(max-width:1120px){.scene-panel{min-height:0}.scene-canvas{min-height:0}.scene-content{min-height:0}}
+
+/* Google sign-in and saved account controls */
+.auth-shell{min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(ellipse at 72% 12%,#eee7fa 0%,transparent 44%),linear-gradient(145deg,#e6d9ef 0%,#e9eaf9 55%,#dff0ed 100%)}
+.auth-card{width:min(100%,430px);padding:34px 32px 28px;border:1px solid #d1d4ec;border-radius:20px;background:#ffffffed;box-shadow:0 24px 70px #3437671c;text-align:center}
+.auth-brand{display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:32px;color:#293653;font:800 20px Manrope,sans-serif;letter-spacing:-.6px}
+.auth-brand .brand-mark{border-color:#bfc1e9;background:#e9e8ff;color:#625ee2}
+.auth-eyebrow{color:#625ee2;font:700 10px/1.4 "DM Sans",sans-serif;letter-spacing:.14em}
+.auth-card h1{margin:8px 0;color:#283553;font:750 30px/1.2 Manrope,"Segoe UI",sans-serif;letter-spacing:-.8px}
+.auth-description{margin:0 auto 22px;max-width:330px;color:#65718b;font:14px/1.65 "DM Sans",sans-serif}
+.google-button-slot{min-height:44px;display:flex;justify-content:center;margin:18px auto 12px}
+.auth-setup{display:grid;gap:7px;margin:18px 0 12px;padding:13px;border:1px solid #e5c992;border-radius:10px;background:#fff8e9;text-align:left;color:#665334;font:12px/1.5 "DM Sans",sans-serif}
+.auth-setup strong{font-size:13px}.auth-setup code{color:#5146a7;font:600 11px Consolas,monospace}
+.auth-error{margin:14px 0;padding:10px 12px;border:1px solid #e8b8c0;border-radius:9px;background:#fff0f1;color:#9d3343;text-align:left;font:12px/1.5 "DM Sans",sans-serif}
+.auth-footnote{display:block;margin-top:18px;color:#8790a3;font:11px/1.5 "DM Sans",sans-serif}
+.auth-card>p:not(.auth-description){color:#65718b;font-size:13px}
+.topbar-actions{display:flex;align-items:center;gap:10px}
+.signed-in-user{display:grid;gap:2px;min-width:0;text-align:right}
+.signed-in-user strong{overflow:hidden;color:#34415d;text-overflow:ellipsis;white-space:nowrap;font:700 12px "DM Sans",sans-serif}
+.signed-in-user span{overflow:hidden;color:#7b8499;text-overflow:ellipsis;white-space:nowrap;font:11px "DM Sans",sans-serif}
+.logout-button{height:35px;display:flex;align-items:center;gap:6px;padding:0 10px;border:1px solid #d2d7e6;border-radius:8px;background:#f8f9fd;color:#52607b;font:650 11px "DM Sans",sans-serif;cursor:pointer}
+.logout-button:hover{border-color:#aaa8e0;background:#f1f0ff;color:#554fbd}
+@media(max-width:700px){.auth-card{padding:28px 20px 24px}.auth-brand{margin-bottom:25px}.topbar-actions{gap:6px}.signed-in-user{display:none}.logout-button{height:32px;padding:0 8px}.logout-button span{display:none}}
+
+/* Readability pass: comfortable body text on laptops and phones. */
+:root{font-family:"Segoe UI",Arial,sans-serif;font-size:16px;color:#26344f}
+body{font-size:16px;line-height:1.5;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+button,select,textarea{font-family:inherit;font-size:inherit}
+.tag{font-size:11px;color:#626b7d;letter-spacing:.04em}
+.top-center{font-size:12px;color:#5d687d;letter-spacing:.06em}
+.panel-title{font-size:13px;letter-spacing:.025em}
+.file-pill{font-size:11px}
+.run-button{min-height:40px;font-size:14px}
+.scene-count{font-size:12px;color:#d7e2f5}
+.scene-content h1{font-size:clamp(23px,2.1vw,32px);line-height:1.25;letter-spacing:-.35px}
+.scene-content p{font-size:15px;line-height:1.65;color:#d5def0}
+.eyebrow{font-size:11px;letter-spacing:.1em}
+.scene-source-line>span:first-child{font-size:12px;line-height:1.5}
+.scene-source-line code{font-size:14px;line-height:1.6}
+.scene-source-line .scene-source-placeholder{font-size:14px;line-height:1.5}
+.editor-wrap{font-size:16px;line-height:1.8}
+.editor-wrap textarea{font-size:16px;line-height:1.8}
+.line-numbers{font-size:14px;line-height:1.8;color:#69758a}
+.editor-foot{font-size:11px;color:#626c80}
+.lesson-picker label>span{font-size:12px;letter-spacing:.04em}
+.lesson-picker select{font-size:15px}
+.lesson-picker-hint strong{font-size:16px}
+.lesson-picker-hint span{font-size:13px}
+.lesson-point p{font-size:15px;line-height:1.55}
+.guide-row{font-size:13px;line-height:1.45}
+.stage-kicker{font-size:12px;letter-spacing:.04em}
+.collection-title strong{font-size:14px}
+.collection-title span{font-size:13px}
+.list-cell span{font-size:12px}
+.list-cell b{font-size:16px;line-height:1.3}
+.state-card span{font-size:13px}
+.state-card strong{font-size:16px}
+.transition-row,.no-transition{font-size:13px;line-height:1.5}
+.call-stack-title{font-size:12px;letter-spacing:.05em}
+.call-stack-title span{font-size:12px}
+.call-frame{font-size:14px}
+.call-frame>span{font-size:12px}
+.state-name{font-size:13px}
+.state-type{font-size:12px;color:#647089}
+.state-item strong{font-size:13px}
+.empty-state{font-size:13px;line-height:1.55}
+.why-card>span{font-size:10px}
+.why-card b{font-size:13px;line-height:1.5}
+.why-card small{font-size:12px}
+.stack-count{font-size:12px}
+.stack-frame b{font-size:12px}
+.stack-frame small{font-size:11px}
+.frame-label{font-size:10px}
+.scene-caption{font-size:11px;letter-spacing:.02em}
+.timeline-title,.timeline-end{font-size:11px;letter-spacing:.04em}
+.step-label{font-size:11px;letter-spacing:.025em}
+.transport-controls button{width:33px;height:33px}
+.speed-control,.speed-control select{font-size:13px}
+.console-head .panel-title{font-size:12px}
+.console-status{font-size:10px}
+.console-content{font-size:14px;line-height:1.65}
+.console-placeholder{font-size:13px}
+footer{font-size:10px;letter-spacing:.05em}
+.program-input>span{font-size:12px}
+.program-input textarea{font-size:15px;line-height:1.6}
+.program-input small{font-size:12px}
+.auth-eyebrow{font-size:11px}
+.auth-description{font-size:15px}
+.auth-setup{font-size:13px;line-height:1.55}
+.auth-setup strong{font-size:14px}
+.auth-setup code{font-size:12px}
+.auth-error{font-size:13px;line-height:1.55}
+.auth-footnote{font-size:12px}
+.signed-in-user strong{font-size:13px}
+.signed-in-user span{font-size:12px}
+.logout-button{font-size:12px}
+@media(max-width:700px){
+  body{font-size:15px}
+  .app-shell{padding-left:12px;padding-right:12px}
+  .panel-title{font-size:13px}
+  .top-center{font-size:12px}
+  .run-button{font-size:13px}
+  .editor-wrap,.editor-wrap textarea{font-size:16px;line-height:1.75}
+  .line-numbers{font-size:14px;line-height:1.75}
+  .scene-content p,.lesson-point p{font-size:15px}
+  .scene-source-line code,.scene-source-line .scene-source-placeholder{font-size:14px}
+  .program-input textarea{font-size:15px}
+  .state-item strong,.state-name{font-size:13px}
+  .transition-row,.no-transition{font-size:13px}
+  .console-content{font-size:14px}
+  .timeline-title,.timeline-end,.step-label{font-size:11px}
+  .footer{font-size:10px}
+}
+@media(max-width:420px){
+  .auth-shell{padding:14px}
+  .auth-card{padding:25px 17px 22px}
+  .lesson-picker select{font-size:14px}
+  .scene-content h1{font-size:23px}
+  .scene-content p{font-size:14px}
+  .scene-source-line{gap:7px}
+  .scene-source-line code{font-size:13px}
+}
+
+
+/* Header language selector */
+.language-picker{gap:8px;flex:none}
+.language-picker .demo-dot{width:7px;height:7px;border-radius:50%;background:#54cba3;box-shadow:0 0 8px #54cba377}
+.language-label{font-size:11px;font-weight:700;letter-spacing:.07em;color:#66718a}
+.language-picker select{max-width:170px;height:34px;padding:0 28px 0 10px;border:1px solid #cfd5e6;border-radius:8px;background:#f8f9ff;color:#293653;font:600 13px 'Segoe UI',Arial,sans-serif;cursor:pointer}
+.language-picker select:focus-visible{outline:2px solid #8179dc;outline-offset:2px}
+.language-picker option:disabled{color:#8b91a2}
+@media(max-width:700px){.topbar{height:auto;min-height:70px;flex-wrap:wrap;padding:9px 0;row-gap:8px}.brand{order:1;font-size:18px}.topbar-actions{order:2;margin-left:auto}.language-picker{order:3;flex-basis:100%;justify-content:flex-start;padding:0 2px}.language-picker select{max-width:210px}}
+@media(max-width:420px){.brand{gap:7px}.brand .tag{display:none}.language-picker select{height:36px;font-size:14px}}

@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: codeflow-bhaskar-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: uvicorn app:app --app-dir backend --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: CODEFLOW_ENV
+        value: production
+      - key: CODEFLOW_COOKIE_SECURE
+        value: "true"
+      - key: CODEFLOW_COOKIE_SAMESITE
+        value: none
+      - key: CODEFLOW_ALLOWED_ORIGINS
+        value: https://codeflow-bhaskar-web.onrender.com
+      - key: CODEFLOW_SESSION_SECRET
+        generateValue: true
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+
+  - type: web
+    runtime: static
+    name: codeflow-bhaskar-web
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_BASE_URL
+        value: https://codeflow-bhaskar-api.onrender.com
+      - key: VITE_GOOGLE_CLIENT_ID
+        sync: false

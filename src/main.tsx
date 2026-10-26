@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Activity, ChevronLeft, ChevronRight, CircleHelp, Code2, FastForward, Pause, Play, RotateCcw, Terminal, Waves } from 'lucide-react';
+import { Activity, ChevronLeft, ChevronRight, CircleHelp, Code2, FastForward, LogOut, Pause, Play, RotateCcw, Terminal, Waves } from 'lucide-react';
 import './style.css';
 import { concepts, lessons, type Lesson } from './lessons';
 
@@ -50,7 +50,113 @@ function formatTraceValue(value: unknown): string {
 function isDictionary(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
+type AuthUser = { id: string; name: string; email: string; picture?: string | null };
+type GoogleCredential = { credential: string };
+type GoogleIdentityApi = {
+  initialize: (options: { client_id: string; auto_select: false; callback: (response: GoogleCredential) => void }) => void;
+  renderButton: (target: HTMLElement, options: { theme: 'outline'; size: 'large'; shape: 'pill'; text: 'continue_with'; width: number; logo_alignment: 'left' }) => void;
+  disableAutoSelect: () => void;
+};
+declare global {
+  interface Window { google?: { accounts?: { id?: GoogleIdentityApi } } }
+  interface ImportMetaEnv { readonly VITE_GOOGLE_CLIENT_ID?: string }
+}
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim() ?? '';
+let googleInitializedFor = '';
+
 function App() {
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState('');
+  const googleButtonRef = useRef<HTMLDivElement>(null);
+  const credentialHandler = useRef<(credential: string) => void>(() => undefined);
+
+  useEffect(() => {
+    let active = true;
+    fetch(`${API_BASE_URL}/api/auth/session`, { credentials: 'include' })
+      .then(async response => {
+        if (!response.ok) throw new Error('Could not check your saved login. Make sure the CodeFlow API is running.');
+        return response.json() as Promise<{ user: AuthUser | null }>;
+      })
+      .then(session => { if (active) setUser(session.user); })
+      .catch(cause => { if (active) setAuthError(cause instanceof Error ? cause.message : 'Could not connect to the login service.'); })
+      .finally(() => { if (active) setAuthLoading(false); });
+    return () => { active = false; };
+  }, []);
+
+  async function signInWithCredential(credential: string) {
+    setAuthError('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/auth/google`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ credential }),
+      });
+      const result = await response.json() as { user?: AuthUser; detail?: string };
+      if (!response.ok || !result.user) throw new Error(result.detail ?? 'Google sign-in could not be completed.');
+      setUser(result.user);
+    } catch (cause) {
+      setAuthError(cause instanceof Error ? cause.message : 'Google sign-in could not be completed.');
+    }
+  }
+  credentialHandler.current = credential => { void signInWithCredential(credential); };
+
+  useEffect(() => {
+    if (authLoading || user || !GOOGLE_CLIENT_ID || !googleButtonRef.current) return;
+    const script = document.getElementById('google-identity') as HTMLScriptElement | null;
+    let attempts = 0;
+    const renderButton = () => {
+      const google = window.google?.accounts?.id;
+      const target = googleButtonRef.current;
+      if (!google || !target) return;
+      if (googleInitializedFor !== GOOGLE_CLIENT_ID) {
+        google.initialize({ client_id: GOOGLE_CLIENT_ID, auto_select: false, callback: response => credentialHandler.current(response.credential) });
+        googleInitializedFor = GOOGLE_CLIENT_ID;
+      }
+      if (target.dataset.ready === 'true') return;
+      google.renderButton(target, { theme: 'outline', size: 'large', shape: 'pill', text: 'continue_with', width: Math.min(320, target.clientWidth || 320), logo_alignment: 'left' });
+      target.dataset.ready = 'true';
+    };
+    const timer = window.setInterval(() => {
+      renderButton();
+      attempts += 1;
+      if (attempts >= 80 || googleButtonRef.current?.dataset.ready === 'true') window.clearInterval(timer);
+    }, 150);
+    script?.addEventListener('load', renderButton);
+    renderButton();
+    return () => {
+      window.clearInterval(timer);
+      script?.removeEventListener('load', renderButton);
+    };
+  }, [authLoading, user]);
+
+  async function logout() {
+    setAuthError('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/auth/logout`, { method: 'POST', credentials: 'include' });
+      if (!response.ok) throw new Error('Could not sign out. Please try again.');
+      window.google?.accounts?.id?.disableAutoSelect();
+      window.localStorage.removeItem(WORKSPACE_STORAGE_KEY);
+      setUser(null);
+    } catch (cause) {
+      setAuthError(cause instanceof Error ? cause.message : 'Could not sign out. Please try again.');
+    }
+  }
+
+  if (authLoading) return <main className="auth-shell"><section className="auth-card"><div className="auth-brand"><span className="brand-mark"><Waves size={19} /></span><b>codeflow</b></div><p>Checking your sign-in…</p></section></main>;
+  if (user) return <CodeFlowWorkspace key={user.id} user={user} onLogout={logout} />;
+  return <main className="auth-shell"><section className="auth-card">
+    <div className="auth-brand"><span className="brand-mark"><Waves size={19} /></span><b>codeflow</b></div>
+    <span className="auth-eyebrow">PYTHON, MADE VISUAL</span>
+    <h1>Welcome back</h1>
+    <p className="auth-description">Sign in with Google to open your visual coding workspace. You’ll stay signed in on this device until you log out.</p>
+    {authError && <div className="auth-error" role="alert">{authError}</div>}
+    {GOOGLE_CLIENT_ID ? <div className="google-button-slot" ref={googleButtonRef} /> : <div className="auth-setup"><strong>Google login needs setup</strong><span>Add <code>VITE_GOOGLE_CLIENT_ID</code> for the web app and <code>GOOGLE_CLIENT_ID</code> for the API, then restart both.</span></div>}
+    <small className="auth-footnote">Your session stays saved for one year, or until you log out.</small>
+  </section></main>;
+}
+function CodeFlowWorkspace({ user, onLogout }: { user: AuthUser; onLogout: () => Promise<void> }) {
   const [savedWorkspace] = useState(readSavedWorkspace);
   const [selectedLessonId, setSelectedLessonId] = useState(savedWorkspace.selectedLessonId);
   const [code, setCode] = useState(savedWorkspace.code);
@@ -75,7 +181,7 @@ function App() {
   const changedVariableNames = new Set(current?.changes.map(change => change.name) ?? []);
   const progress = result?.events.length ? ((step + 1) / result.events.length) * 100 : 0;
   const changed = code !== currentLesson.code;
-  const eventLabel = !current ? 'READY TO PLAY' : current.type === 'branch' ? 'CONDITION CHECKED' : current.type === 'iteration' ? 'ITEM SELECTED' : current.type === 'loop_control' ? 'LOOP CONTROL' : current.type === 'input' ? 'INPUT RECEIVED' : current.type === 'exception' ? 'ERROR CAUGHT' : current.type === 'class_def' ? 'CLASS DEFINED' : current.type === 'assignment' ? 'VARIABLE UPDATED' : current.type === 'output' ? 'OUTPUT SHOWN' : current.type === 'loop_end' ? 'LOOP FINISHED' : current.type === 'function_def' ? 'FUNCTION DEFINED' : current.type === 'call' ? 'FUNCTION CALLED' : current.type === 'return' ? 'VALUE RETURNED' : 'STARTING STATE';
+  const eventLabel = !current ? 'READY TO PLAY' : current.type === 'branch' ? 'CONDITION CHECKED' : current.type === 'iteration' ? 'ITEM SELECTED' : current.type === 'loop_control' ? 'LOOP CONTROL' : current.type === 'input' ? 'INPUT RECEIVED' : current.type === 'exception' ? 'ERROR CAUGHT' : current.type === 'class_def' ? 'CLASS DEFINED' : current.type === 'assignment' ? 'VARIABLE UPDATED' : current.type === 'output' ? 'OUTPUT SHOWN' : current.type === 'loop_end' ? 'LOOP FINISHED' : current.type === 'function_def' ? 'FUNCTION DEFINED' : current.type === 'call' ? 'FUNCTION CALLED' : current.type === 'return' ? 'VALUE RETURNED' : current.type === 'module' ? 'MODULE USED' : current.type === 'file' ? 'FILE STEP' : current.type === 'decorator' ? 'DECORATOR APPLIED' : current.type === 'generator_yield' ? 'VALUE YIELDED' : current.type === 'await' ? 'ASYNC STEP' : 'STARTING STATE';
 
   useEffect(() => {
     if (!playing || !result) return;
@@ -101,6 +207,11 @@ function App() {
     if (current.type === 'branch') return { eyebrow: 'CONDITION CHECKED', title: current.narration, detail: 'The highlighted source line chooses which block runs next.' }
     if (current.type === 'iteration') return { eyebrow: 'VALUE SELECTED', title: current.narration, detail: 'Follow the selected value through the program state.' };
     if (current.type === 'class_def') return { eyebrow: 'CLASS DEFINED', title: current.narration, detail: 'The class is a blueprint. Creating an instance runs its initializer.' };
+    if (current.type === 'module') return { eyebrow: 'MODULE TOOL', title: current.narration, detail: 'This lesson uses a small allowlist of safe math and statistics helpers.' };
+    if (current.type === 'file') return { eyebrow: 'IN-MEMORY FILE', title: current.narration, detail: 'The lesson file exists only in the visualizer memory; it does not read or write your device.' };
+    if (current.type === 'decorator') return { eyebrow: 'DECORATOR APPLIED', title: current.narration, detail: 'The decorator is evaluated when Python defines the function.' };
+    if (current.type === 'generator_yield') return { eyebrow: 'GENERATOR VALUE', title: current.narration, detail: 'Follow this yielded value into the loop that consumes it.' };
+    if (current.type === 'await') return { eyebrow: 'ASYNC STEP', title: current.narration, detail: 'This teaching trace models awaited steps in order, without real delays or parallel tasks.' };
     if (current.type === 'exception') return { eyebrow: 'ERROR CAUGHT', title: current.narration, detail: 'The matching except block takes control, so the program can continue.' };
     if (current.type === 'input') return { eyebrow: 'INPUT RECEIVED', title: current.narration, detail: 'The value from Program input is passed into input() as text.' };
     if (current.type === 'loop_control') return { eyebrow: 'LOOP CONTROL', title: current.narration, detail: 'The loop changes direction at this line.' };
@@ -137,6 +248,7 @@ function App() {
     try {
       const response = await fetch(`${API_BASE_URL}/api/trace`, {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code, inputs: programInput ? programInput.split(/\r?\n/) : [] }),
       });
@@ -177,8 +289,8 @@ function App() {
   return <main className="app-shell">
     <header className="topbar">
       <div className="brand"><div className="brand-mark"><Waves size={19} /></div><span>codeflow</span><span className="tag">LEARN BY WATCHING</span></div>
-      <div className="top-center"><span className="demo-dot" /> PYTHON LESSONS <span className="divider">/</span> SAFE MODE</div>
-      <button className="run-button" onClick={togglePlayback} disabled={loading}>{loading ? <Activity size={15} /> : playing ? <Pause size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" />} {loading ? 'Running…' : playing ? 'Pause' : result && step < result.events.length - 1 ? 'Continue' : 'Run code'}</button>
+      <label className="top-center language-picker"><span className="demo-dot" /><span className="language-label">LANGUAGE</span><select aria-label="Programming language" defaultValue="python"><option value="python">Python</option><option value="javascript" disabled>JavaScript — coming soon</option><option value="java" disabled>Java — coming soon</option><option value="cpp" disabled>C++ — coming soon</option></select></label>
+      <div className="topbar-actions"><div className="signed-in-user"><strong>{user.name}</strong><span>{user.email}</span></div><button className="logout-button" onClick={() => { void onLogout(); }}><LogOut size={14} /><span>Log out</span></button><button className="run-button" onClick={togglePlayback} disabled={loading}>{loading ? <Activity size={15} /> : playing ? <Pause size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" />} {loading ? 'Running…' : playing ? 'Pause' : result && step < result.events.length - 1 ? 'Continue' : 'Run code'}</button></div>
     </header>
 
     <section className="lesson-picker" aria-label="Choose a concept, type, and example">

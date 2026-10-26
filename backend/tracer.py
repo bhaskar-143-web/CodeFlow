@@ -50,6 +50,19 @@ class _SafeInstance:
         self.attributes: dict[str, Any] = {}
 
 
+class _SafeModule:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+class _VirtualFile:
+    def __init__(self, name: str, mode: str, files: dict[str, str]) -> None:
+        self.name = name
+        self.mode = mode
+        self.files = files
+        self.closed = False
+
+
 class SafePythonTracer:
     """Interpret a small Python teaching subset without eval() or exec()."""
 
@@ -64,6 +77,10 @@ class SafePythonTracer:
         self.classes: dict[str, dict[str, ast.FunctionDef]] = {}
         self.call_stack: list[str] = []
         self.loop_depth = 0
+        self.virtual_files: dict[str, str] = {}
+        self.async_functions: set[str] = set()
+        self.generator_functions: set[str] = set()
+        self.generator_capture: list[Any] | None = None
 
     def safe_value(self, value: Any, seen: set[int] | None = None) -> Any:
         if seen is None:
@@ -80,6 +97,10 @@ class SafePythonTracer:
             if not math.isfinite(value) or abs(value) > MAX_INTEGER:
                 raise TraceProblem("This number is too large to visualize.")
             return value
+        if isinstance(value, _SafeModule):
+            return {"module": value.name}
+        if isinstance(value, _VirtualFile):
+            return {"file": value.name, "mode": value.mode, "closed": value.closed}
         if isinstance(value, _SafeInstance):
             identity = id(value)
             if identity in seen:
@@ -155,6 +176,48 @@ class SafePythonTracer:
             self.run_statement(statement)
 
     def run_statement(self, node: ast.stmt) -> None:
+        if isinstance(node, ast.Import):
+            allowed = {"math", "statistics", "asyncio"}
+            for alias in node.names:
+                if alias.name not in allowed or alias.asname:
+                    raise TraceProblem("Only import math, import statistics, and import asyncio are available in the safe visualizer.")
+                self.values[alias.name] = _SafeModule(alias.name)
+                self.emit("module", node, f"Imported the safe {alias.name} module.", [self.change(alias.name, _MISSING, self.values[alias.name])])
+            return
+
+        if isinstance(node, ast.ImportFrom):
+            raise TraceProblem("Use import math or import statistics, then access a function with dot notation.")
+
+        if isinstance(node, ast.With):
+            if len(node.items) != 1 or node.items[0].optional_vars is None or not isinstance(node.items[0].optional_vars, ast.Name):
+                raise TraceProblem("Use one file at a time with 'with open(...) as file:'.")
+            context = node.items[0].context_expr
+            if not isinstance(context, ast.Call) or not isinstance(context.func, ast.Name) or context.func.id != "open" or not 1 <= len(context.args) <= 2 or context.keywords:
+                raise TraceProblem("Use open('name.txt', 'r' or 'w') inside a with block.")
+            filename = self.evaluate(context.args[0])
+            mode = self.evaluate(context.args[1]) if len(context.args) == 2 else "r"
+            if not isinstance(filename, str) or not filename or len(filename) > 80 or any(char in filename for char in "/\\:") or filename in {".", ".."}:
+                raise TraceProblem("Virtual file names must be simple names such as 'notes.txt'.")
+            if mode not in {"r", "w", "a"}:
+                raise TraceProblem("Virtual files support only 'r', 'w', or 'a' mode.")
+            if mode == "r" and filename not in self.virtual_files:
+                raise _PythonRaised("FileNotFoundError", f"No virtual file named {filename!r}")
+            if mode == "w":
+                self.virtual_files[filename] = ""
+            self.virtual_files.setdefault(filename, "")
+            file_name = node.items[0].optional_vars.id
+            handle = _VirtualFile(filename, mode, self.virtual_files)
+            before = self.values.get(file_name, _MISSING)
+            self.values[file_name] = handle
+            self.emit("file", node, f"Opened in-memory file {filename!r} for {mode == 'r' and 'reading' or 'writing'}.", [self.change(file_name, before, handle)])
+            try:
+                self.run_block(node.body)
+            finally:
+                handle.closed = True
+                self.values.pop(file_name, None)
+                self.emit("file", node, f"Closed in-memory file {filename!r}.")
+            return
+
         if isinstance(node, ast.ClassDef):
             if node.name in self.classes or node.name in self.functions:
                 raise TraceProblem(f"{node.name} is already defined.")
@@ -181,18 +244,29 @@ class SafePythonTracer:
             self.emit("class_def", node, f"Defined the {node.name} class.")
             return
 
-        if isinstance(node, ast.FunctionDef):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             if node.name in self.functions or node.name in self.classes:
                 raise TraceProblem(f"{node.name} is already defined.")
             if self.call_stack:
                 raise TraceProblem("Define lesson functions at the top level.")
-            if node.decorator_list or node.args.defaults or node.args.kw_defaults or node.args.kwonlyargs or node.args.vararg or node.args.kwarg or node.args.posonlyargs:
-                raise TraceProblem("Use a simple function with named parameters and no decorators or default values.")
+            if node.decorator_list:
+                if len(node.decorator_list) != 1 or not isinstance(node.decorator_list[0], ast.Name):
+                    raise TraceProblem("The visualizer supports one simple identity decorator per function.")
+                decorator = self.functions.get(node.decorator_list[0].id)
+                if decorator is None or len(decorator.args.args) != 1 or len(decorator.body) != 1 or not isinstance(decorator.body[0], ast.Return) or not isinstance(decorator.body[0].value, ast.Name) or decorator.body[0].value.id != decorator.args.args[0].arg:
+                    raise TraceProblem("For this lesson, define a one-parameter identity decorator that returns its function.")
+                self.emit("decorator", node, f"Applied @{node.decorator_list[0].id}; the decorator returns the original function.")
+            if node.args.defaults or node.args.kw_defaults or node.args.kwonlyargs or node.args.vararg or node.args.kwarg or node.args.posonlyargs:
+                raise TraceProblem("Use a simple function with named parameters and no default values.")
             if node.returns or any(argument.annotation for argument in node.args.args):
                 raise TraceProblem("Function type annotations are not supported yet.")
             if len(node.args.args) > 8:
                 raise TraceProblem("Functions can use up to 8 parameters.")
             self.functions[node.name] = node
+            if isinstance(node, ast.AsyncFunctionDef):
+                self.async_functions.add(node.name)
+            if any(isinstance(part, ast.Yield) for part in ast.walk(node)):
+                self.generator_functions.add(node.name)
             self.emit("function_def", node, f"Defined the {node.name} function.")
             return
 
@@ -227,6 +301,18 @@ class SafePythonTracer:
                 self.run_block(node.finalbody)
             return
 
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Yield):
+            if self.generator_capture is None:
+                raise TraceProblem("Use yield inside a generator function.")
+            value = self.evaluate(node.value.value) if node.value.value else None
+            self.generator_capture.append(value)
+            self.emit("generator_yield", node, f"Generator yielded {self.describe(value)}.")
+            return
+
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Await):
+            self.evaluate(node.value)
+            return
+
         if isinstance(node, ast.Return):
             if not self.call_stack:
                 raise TraceProblem("Use return inside a function.")
@@ -238,6 +324,17 @@ class SafePythonTracer:
             if len(node.targets) != 1:
                 raise TraceProblem("Assign one value at a time.")
             target = node.targets[0]
+            if isinstance(target, (ast.Tuple, ast.List)) and all(isinstance(item, ast.Name) for item in target.elts):
+                values = self.evaluate(node.value)
+                if not isinstance(values, (tuple, list)) or len(values) != len(target.elts):
+                    raise TraceProblem("Unpack a tuple or list into the same number of variable names.")
+                changes = []
+                for name_node, after in zip(target.elts, values):
+                    before = self.values.get(name_node.id, _MISSING)
+                    self.values[name_node.id] = after
+                    changes.append(self.change(name_node.id, before, after))
+                self.emit("assignment", node, "Unpacked each item into its matching variable.", changes)
+                return
             if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):
                 object_name = target.value.id
                 instance = self.values.get(object_name)
@@ -269,7 +366,7 @@ class SafePythonTracer:
             after = self.evaluate(node.value)
             focus = None
             focus_node = node.value if isinstance(node.value, ast.Subscript) else None
-            if isinstance(focus_node, ast.Subscript) and isinstance(focus_node.value, ast.Name):
+            if isinstance(focus_node, ast.Subscript) and not isinstance(focus_node.slice, ast.Slice) and isinstance(focus_node.value, ast.Name):
                 collection_name = focus_node.value.id
                 collection = self.values.get(collection_name)
                 index = self.evaluate(focus_node.slice)
@@ -356,7 +453,7 @@ class SafePythonTracer:
             self.loop_depth += 1
             try:
                 for index, item in enumerate(loop_items):
-                    values_to_assign = list(item) if isinstance(item, (tuple, list)) else [item]
+                    values_to_assign = list(item) if isinstance(node.target, ast.Tuple) and isinstance(item, (tuple, list)) else [item]
                     if len(values_to_assign) != len(target_names):
                         raise TraceProblem("Each loop item must match the number of loop variables.")
                     changes = []
@@ -427,7 +524,28 @@ class SafePythonTracer:
 
     def run_call(self, node: ast.Call, statement: ast.stmt) -> None:
         if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+            module = self.values.get(node.func.value.id)
+            if isinstance(module, _SafeModule):
+                value = self.evaluate(node)
+                if module.name != "asyncio":
+                    self.emit("module", statement, f"Used {module.name}.{node.func.attr}() from the safe module.")
+                return
+        if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
             receiver = self.values.get(node.func.value.id)
+            if isinstance(receiver, _VirtualFile) and node.func.attr == "write":
+                if receiver.closed or receiver.mode not in {"w", "a"} or len(node.args) != 1 or node.keywords:
+                    raise TraceProblem("write() needs one text value on an open file in 'w' or 'a' mode.")
+                value = self.evaluate(node.args[0])
+                if not isinstance(value, str):
+                    raise TraceProblem("Virtual files can write text only.")
+                if len(receiver.files[receiver.name]) + len(value) > MAX_STRING_LENGTH:
+                    raise TraceProblem("Virtual files are limited to 500 characters.")
+                if receiver.mode == "a":
+                    receiver.files[receiver.name] += value
+                else:
+                    receiver.files[receiver.name] = value
+                self.emit("file", statement, f"Wrote {len(value)} characters to {receiver.name!r}.")
+                return
             if isinstance(receiver, _SafeInstance):
                 self.call_method(receiver, node.func.attr, node)
                 return
@@ -606,6 +724,32 @@ class SafePythonTracer:
         if not isinstance(node.func, ast.Name):
             raise TraceProblem("Call a function by its name.")
         function = self.functions[node.func.id]
+        if node.func.id in self.generator_functions:
+            saved_capture = self.generator_capture
+            self.generator_capture = []
+            try:
+                parameters = [argument.arg for argument in function.args.args]
+                if node.keywords:
+                    raise TraceProblem("Call lesson functions using positional values.")
+                arguments = [self.evaluate(argument) for argument in node.args]
+                if len(arguments) != len(parameters):
+                    raise TraceProblem(f"{function.name}() needs {len(parameters)} value(s).")
+                self.emit("call", node, f"Starting generator {function.name}().")
+                saved_values = self.values
+                self.values = {**saved_values, **dict(zip(parameters, arguments))}
+                self.call_stack.append(function.name)
+                try:
+                    self.run_block(function.body)
+                except _ReturnSignal:
+                    pass
+                finally:
+                    self.call_stack.pop()
+                    self.values = saved_values
+                return list(self.generator_capture)
+            finally:
+                self.generator_capture = saved_capture
+        if isinstance(function, ast.AsyncFunctionDef) and not any(name.startswith("async:") for name in self.call_stack):
+            raise TraceProblem("Call async lesson functions through asyncio.run(...).")
         parameters = [argument.arg for argument in function.args.args]
         if node.keywords:
             raise TraceProblem("Call lesson functions using positional values.")
@@ -619,7 +763,7 @@ class SafePythonTracer:
         self.events[-1]["callStack"] = [*self.call_stack, function.name]
         saved_values = self.values
         self.values = {**saved_values, **dict(zip(parameters, arguments))}
-        self.call_stack.append(function.name)
+        self.call_stack.append(("async:" if isinstance(function, ast.AsyncFunctionDef) else "") + function.name)
         parent_loop_depth = self.loop_depth
         self.loop_depth = 0
         result = None
@@ -663,8 +807,26 @@ class SafePythonTracer:
                 return self.safe_value(node.value)
             raise TraceProblem("Only text, numbers, True, False, and None can be used as values.")
 
+        if isinstance(node, ast.Await):
+            if not any(name.startswith("async:") for name in self.call_stack):
+                raise TraceProblem("Use await inside an async function.")
+            value = self.evaluate(node.value)
+            self.emit("await", node, "The async function resumes after its awaited step (simulated without a real delay).")
+            return value
+
         if isinstance(node, ast.Attribute):
             owner = self.evaluate(node.value)
+            if isinstance(owner, _SafeModule):
+                if owner.name == "math" and node.attr in {"pi", "e"}:
+                    return self.safe_value(math.pi if node.attr == "pi" else math.e)
+                allowed = {
+                    "math": {"pi", "e", "sqrt", "floor", "ceil"},
+                    "statistics": {"mean", "median"},
+                    "asyncio": {"run", "sleep"},
+                }
+                if node.attr in allowed.get(owner.name, set()):
+                    return ("module_attribute", owner.name, node.attr)
+                raise TraceProblem(f"{owner.name}.{node.attr} is not available in the safe visualizer.")
             if isinstance(owner, _SafeInstance) and node.attr in owner.attributes:
                 return owner.attributes[node.attr]
             if isinstance(owner, _SafeInstance):
@@ -849,8 +1011,61 @@ class SafePythonTracer:
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in self.classes:
             return self.instantiate_class(node)
 
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "open":
+            raise TraceProblem("Use open() inside a 'with' block so the virtual file is closed safely.")
+
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             receiver = self.evaluate(node.func.value)
+            if isinstance(receiver, _SafeModule) and receiver.name == "asyncio":
+                if node.keywords:
+                    raise TraceProblem("asyncio lesson helpers use positional arguments only.")
+                if node.func.attr == "run" and len(node.args) == 1 and isinstance(node.args[0], ast.Call) and isinstance(node.args[0].func, ast.Name):
+                    function_name = node.args[0].func.id
+                    function = self.functions.get(function_name)
+                    if function_name not in self.async_functions or function is None:
+                        raise TraceProblem("asyncio.run() needs one async lesson function call.")
+                    arguments = [self.evaluate(argument) for argument in node.args[0].args]
+                    synthetic_call = ast.Call(func=ast.Name(id=function_name, ctx=ast.Load()), args=[ast.Constant(value=value) for value in arguments], keywords=[])
+                    self.call_stack.append("async:" + function_name)
+                    try:
+                        result = self.call_function(synthetic_call)
+                    finally:
+                        self.call_stack.pop()
+                    self.emit("await", node, f"asyncio.run() finished {function_name}() in the visual teaching model.")
+                    return result
+                if node.func.attr == "sleep" and len(node.args) == 1:
+                    delay = self.evaluate(node.args[0])
+                    if not self.is_number(delay) or delay < 0:
+                        raise TraceProblem("asyncio.sleep() needs one non-negative number.")
+                    return None
+                raise TraceProblem("The safe asyncio module supports only run() and simulated sleep().")
+            if isinstance(receiver, _VirtualFile):
+                if receiver.closed or node.keywords or node.args:
+                    raise TraceProblem("Use read() with no options on an open virtual file.")
+                if node.func.attr == "read" and receiver.mode == "r":
+                    value = receiver.files.get(receiver.name, "")
+                    self.emit("file", node, f"Read {len(value)} characters from {receiver.name!r}.")
+                    return self.safe_value(value)
+                raise TraceProblem("Open a virtual file in 'r' mode before using read().")
+            if isinstance(receiver, _SafeModule):
+                if node.keywords:
+                    raise TraceProblem("Safe module functions use positional arguments only.")
+                arguments = [self.evaluate(argument) for argument in node.args]
+                module, name = receiver.name, node.func.attr
+                if module == "math" and name in {"sqrt", "floor", "ceil"} and len(arguments) == 1 and self.is_number(arguments[0]):
+                    value = arguments[0]
+                    if name == "sqrt":
+                        if value < 0:
+                            raise _PythonRaised("ValueError", "math domain error")
+                        return self.safe_value(math.sqrt(value))
+                    return self.safe_value(math.floor(value) if name == "floor" else math.ceil(value))
+                if module == "statistics" and name in {"mean", "median"} and len(arguments) == 1:
+                    values = arguments[0]
+                    if not isinstance(values, (list, tuple)) or not values or any(not self.is_number(item) for item in values):
+                        raise TraceProblem(f"statistics.{name}() needs a non-empty list or tuple of numbers.")
+                    result = sum(values) / len(values) if name == "mean" else sorted(values)[(len(values) - 1) // 2] if len(values) % 2 else (sorted(values)[len(values) // 2 - 1] + sorted(values)[len(values) // 2]) / 2
+                    return self.safe_value(result)
+                raise TraceProblem(f"{module}.{name}() is not available in the safe visualizer.")
             if isinstance(receiver, _SafeInstance):
                 return self.call_method(receiver, node.func.attr, node)
 
@@ -1011,7 +1226,7 @@ class SafePythonTracer:
                     raise TraceProblem(f"Collections are limited to {MAX_COLLECTION_ITEMS} items.")
                 result = left + right
             else:
-                raise TraceProblem("Use + with two numbers, two text values, or two lists.")
+                raise _PythonRaised("TypeError", "unsupported operand types for +")
         elif isinstance(operation, ast.Sub):
             self.require_numbers(left, right, "-")
             result = left - right
@@ -1033,6 +1248,10 @@ class SafePythonTracer:
             if right == 0:
                 raise _PythonRaised("ZeroDivisionError", "integer modulo by zero")
             result = left % right
+        elif isinstance(operation, ast.BitAnd):
+            if not isinstance(left, set) or not isinstance(right, set):
+                raise TraceProblem("Use & to find the intersection of two sets.")
+            result = left & right
         elif isinstance(operation, ast.Pow):
             self.require_numbers(left, right, "**")
             if abs(right) > 12:
